@@ -1,0 +1,33 @@
+
+name: Build Pocket Pixel 64
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: pspdev/pspdev:latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Compile PSP homebrew
+        run: |
+          make
+
+      - name: Verify EBOOT
+        run: |
+          test -f EBOOT.PBP
+
+      - name: Upload PSP build
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketPixel64-PSP
+          path: EBOOT.PBP
+          if-no-files-found: error
+          
