@@ -69,37 +69,69 @@ static void rect(int x,int y,int w,int h,unsigned color){
  v[1].color=color;v[1].x=x+w;v[1].y=y+h;v[1].z=0;
  sceGuDrawArray(GU_SPRITES,GU_COLOR_8888|GU_VERTEX_16BIT|GU_TRANSFORM_2D,2,0,v);
 }
-/* Compact built-in 3x5 bitmap font, scaled 2x. Unsupported chars are spaces. */
+/* V2.4.1: compact 5x7 UI font. One PSP pixel per font pixel at normal UI size. */
 static const char *glyph(char c){
  switch(c){
- case 'A':return "010101111101101";case 'B':return "110101110101110";
- case 'C':return "011100100100011";case 'D':return "110101101101110";
- case 'E':return "111100110100111";case 'F':return "111100110100100";
- case 'G':return "011100101101011";case 'H':return "101101111101101";
- case 'I':return "111010010010111";case 'J':return "001001001101010";
- case 'K':return "101101110101101";case 'L':return "100100100100111";
- case 'M':return "101111111101101";case 'N':return "101111111111101";
- case 'O':return "010101101101010";case 'P':return "110101110100100";
- case 'Q':return "010101101111011";case 'R':return "110101110101101";
- case 'S':return "011100010001110";case 'T':return "111010010010010";
- case 'U':return "101101101101111";case 'V':return "101101101101010";
- case 'W':return "101101111111101";case 'X':return "101101010101101";
- case 'Y':return "101101010010010";case 'Z':return "111001010100111";
- case '0':return "111101101101111";case '1':return "010110010010111";
- case '2':return "111001111100111";case '3':return "111001111001111";
- case '4':return "101101111001001";case '5':return "111100111001111";
- case '6':return "111100111101111";case '7':return "111001001001001";
- case '8':return "111101111101111";case '9':return "111101111001111";
- case ':':return "000010000010000";case '.':return "000000000000010";
- case '-':return "000000111000000";case '/':return "001001010100100";
- case '+':return "000010111010000";case '>':return "100010001010100";
- case '<':return "001010100010001";case '?':return "111001010000010";
- case '!':return "010010010000010";case 'x':return "000101010101000";
- default:return "000000000000000";
+ case '0':return "01110100111010110101110011000101110";;
+ case '1':return "00100011000010000100001000010001110";;
+ case '2':return "01110100010000100010001000100011111";;
+ case '3':return "11110000010000101110000010000111110";;
+ case '4':return "00010001100101010010111110001000010";;
+ case '5':return "11111100001000011110000010000111110";;
+ case '6':return "01110100001000011110100011000101110";;
+ case '7':return "11111000010001000100010000100001000";;
+ case '8':return "01110100011000101110100011000101110";;
+ case '9':return "01110100011000101111000010000101110";;
+ case 'A':return "01110100011000111111100011000110001";;
+ case 'B':return "11110100011000111110100011000111110";;
+ case 'C':return "01111100001000010000100001000001111";;
+ case 'D':return "11110100011000110001100011000111110";;
+ case 'E':return "11111100001000011110100001000011111";;
+ case 'F':return "11111100001000011110100001000010000";;
+ case 'G':return "01111100001000010111100011000101111";;
+ case 'H':return "10001100011000111111100011000110001";;
+ case 'I':return "11111001000010000100001000010011111";;
+ case 'J':return "00111000100001000010100101001001100";;
+ case 'K':return "10001100101010011000101001001010001";;
+ case 'L':return "10000100001000010000100001000011111";;
+ case 'M':return "10001110111010110101100011000110001";;
+ case 'N':return "10001110011010110011100011000110001";;
+ case 'O':return "01110100011000110001100011000101110";;
+ case 'P':return "11110100011000111110100001000010000";;
+ case 'Q':return "01110100011000110001101011001001101";;
+ case 'R':return "11110100011000111110101001001010001";;
+ case 'S':return "01111100001000001110000010000111110";;
+ case 'T':return "11111001000010000100001000010000100";;
+ case 'U':return "10001100011000110001100011000101110";;
+ case 'V':return "10001100011000110001100010101000100";;
+ case 'W':return "10001100011000110101101011010101010";;
+ case 'X':return "10001100010101000100010101000110001";;
+ case 'Y':return "10001100010101000100001000010000100";;
+ case 'Z':return "11111000010001000100010001000011111";;
+ case ':':return "00000001000010000000001000010000000";;
+ case '.':return "00000000000000000000000000011000110";;
+ case '-':return "00000000000000011111000000000000000";;
+ case '/':return "00001000010001000100010001000010000";;
+ case '+':return "00000001000010011111001000010000000";;
+ case '>':return "10000010000010000010001000100010000";;
+ case '<':return "00001000100010001000001000001000001";;
+ case '?':return "01110100010000100010001000000000100";;
+ case '!':return "00100001000010000100001000000000100";;
+ default:return "00000000000000000000000000000000000";
  }
 }
 static void textat(int x,int y,const char *s,unsigned color,int scale){
- for(;*s;s++,x+=4*scale){const char *g=glyph(*s);for(int i=0;i<15;i++)if(g[i]=='1')rect(x+(i%3)*scale,y+(i/3)*scale,scale,scale,color);}
+ // Keep panel/menu text inside existing bounds; use a crisp 5x7 face with a 1px shadow.
+ int px=(scale>=3)?2:1;
+ for(;*s;s++,x+=6*px){
+  char c=*s;if(c>='a'&&c<='z')c=(char)(c-'a'+'A');
+  const char *g=glyph(c);
+  for(int i=0;i<35;i++)if(g[i]=='1'){
+   int gx=x+(i%5)*px,gy=y+(i/5)*px;
+   rect(gx+1,gy+1,px,px,RGB(21,78,105));
+   rect(gx,gy,px,px,color);
+  }
+ }
 }
 /* Frutiger Aero: luminous aqua glass, no extra texture allocations. */
 static unsigned bg(void){return RGB(191,235,244);}
