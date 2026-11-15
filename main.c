@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-PSP_MODULE_INFO("PSP Pixel Studio",0,2,3);
+PSP_MODULE_INFO("PSP Pixel Studio",0,2,4);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
 #define SW 480
 #define SH 272
@@ -34,6 +34,8 @@ static int offset_x=0,offset_y=0;
 typedef struct {uint16_t x,y;uint32_t before,after;} Change;
 static Change history[HIST];static int hcount=0,hpos=0;
 static char status[80]="";
+static int circle_active=0,circle_x=0,circle_y=0,circle_radius=4,circle_undo=0,circle_redo=0;
+static uint32_t circle_before[MAXC*MAXC],circle_after[MAXC*MAXC];
 static const char *palette_names[]={"RGB64","AMMO-8","CL8UDS","LAVA-GB","MULFOK32","NYX8","BLESSING","SWEETIE16","TWILIGHT5"};
 static const char *palette_hex[]={
 "", "040c06 112318 1e3a29 305d42 4d8061 89a257 bedc7f eeffcc",
@@ -104,7 +106,7 @@ static void fit_view(void){
  int z=SH/size;if(SW/size<z)z=SW/size;if(z<1)z=1;if(z>16)z=16;
  zoom=z;view_x=view_y=0;
 }
-static void init_canvas(int n){size=n;memset(artwork,0,sizeof(artwork));cursor_x=cursor_y=0;dirty=0;hcount=hpos=0;fit_view();}
+static void init_canvas(int n){circle_active=circle_undo=circle_redo=0;size=n;memset(artwork,0,sizeof(artwork));cursor_x=cursor_y=0;dirty=0;hcount=hpos=0;fit_view();}
 static void adjust_view(void){
  int cols=SW/zoom,rows=SH/zoom;
  if(cols<size){int margin=cols>8?3:1;if(cursor_x<view_x+margin)view_x=cursor_x-margin;if(cursor_x>=view_x+cols-margin)view_x=cursor_x-cols+margin+1;}
@@ -122,15 +124,15 @@ static void next_zoom(void){
  int next=0;for(int i=0;i<8;i++)if(steps[i]>zoom){next=steps[i];break;}
  if(next)set_zoom(next);else {fit_view();adjust_view();placement();msg("FIT CANVAS");}
 }
-static void edit_pixel(uint32_t value){
+static void edit_pixel(uint32_t value){circle_undo=circle_redo=0;
  int idx=cursor_y*size+cursor_x;uint32_t old=artwork[idx];if(old==value)return;
  if(hpos<hcount)hcount=hpos;
  if(hcount==HIST){memmove(history,history+1,(HIST-1)*sizeof(Change));hcount--;hpos--;}
  history[hpos].x=cursor_x;history[hpos].y=cursor_y;history[hpos].before=old;history[hpos].after=value;
  hpos++;hcount=hpos;artwork[idx]=value;dirty=1;
 }
-static void undo(void){if(hpos<=0){msg("NOTHING TO UNDO");return;}Change *c=&history[--hpos];artwork[c->y*size+c->x]=c->before;dirty=1;msg("UNDO");}
-static void redo(void){if(hpos>=hcount){msg("NOTHING TO REDO");return;}Change *c=&history[hpos++];artwork[c->y*size+c->x]=c->after;dirty=1;msg("REDO");}
+static void undo(void){if(circle_undo){memcpy(artwork,circle_before,sizeof(artwork));circle_undo=0;circle_redo=1;dirty=1;msg("CIRCLE UNDO");return;}if(hpos<=0){msg("NOTHING TO UNDO");return;}Change *c=&history[--hpos];artwork[c->y*size+c->x]=c->before;dirty=1;msg("UNDO");}
+static void redo(void){if(circle_redo){memcpy(artwork,circle_after,sizeof(artwork));circle_redo=0;circle_undo=1;dirty=1;msg("CIRCLE REDO");return;}if(hpos>=hcount){msg("NOTHING TO REDO");return;}Change *c=&history[hpos++];artwork[c->y*size+c->x]=c->after;dirty=1;msg("REDO");}
 static void sample(void){
  uint32_t v=artwork[cursor_y*size+cursor_x];if(!v){msg("TRANSPARENT PIXEL");return;}
  for(int i=0;i<palette_count;i++)if(palette[i]==v){chosen=i;msg("COLOR PICKED");return;}
@@ -187,6 +189,28 @@ static void export_png(void){
  int ok=write_all(f,signature,8)&&chunk(f,"IHDR",ihdr,13)&&chunk(f,"IDAT",compressed,pos)&&chunk(f,"IEND",NULL,0);
  sceIoClose(f);if(ok){char buf[60];snprintf(buf,sizeof(buf),"EXPORTED ART %03d",found);msg(buf);}else msg("EXPORT FAILED");
 }
+static void circle_dot(int x,int y,int commit){
+ if(x<0||y<0||x>=size||y>=size)return;
+ if(commit){artwork[y*size+x]=palette[chosen];return;}
+ int px=offset_x+(x-view_x)*zoom,py=offset_y+(y-view_y)*zoom;
+ if(px<SW&&py<SH&&px+zoom>0&&py+zoom>0)rect(px,py,zoom,zoom,RGB(255,230,72));
+}
+static void circle_outline(int cx,int cy,int r,int commit){
+ int x=r,y=0,d=1-r;
+ while(x>=y){
+  circle_dot(cx+x,cy+y,commit);circle_dot(cx+y,cy+x,commit);
+  circle_dot(cx-y,cy+x,commit);circle_dot(cx-x,cy+y,commit);
+  circle_dot(cx-x,cy-y,commit);circle_dot(cx-y,cy-x,commit);
+  circle_dot(cx+y,cy-x,commit);circle_dot(cx+x,cy-y,commit);
+  y++;if(d<0)d+=2*y+1;else{x--;d+=2*(y-x)+1;}
+ }
+}
+static void circle_commit(void){
+ memcpy(circle_before,artwork,sizeof(artwork));
+ circle_outline(circle_x,circle_y,circle_radius,1);
+ memcpy(circle_after,artwork,sizeof(artwork));
+ circle_undo=1;circle_redo=0;hcount=hpos=0;dirty=1;circle_active=0;msg("CIRCLE PLACED");
+}
 static void canvas_frame(void){
  rect(0,0,SW,SH,bg());placement();
  int cols=(SW-offset_x+zoom-1)/zoom,rows=(SH-offset_y+zoom-1)/zoom;
@@ -212,6 +236,7 @@ static void canvas_frame(void){
    if(zoom>=4||thick==2)rect(offset_x,y,right-offset_x,thick,(i%sub==0)?accent():RGB(113,124,143));
   }
  }
+ if(circle_active)circle_outline(circle_x,circle_y,circle_radius,0);
  if(!clean_preview){
   int x=offset_x+(cursor_x-view_x)*zoom,y=offset_y+(cursor_y-view_y)*zoom;
   unsigned mark=theme?RGB(255,227,91):RGB(255,72,123);
@@ -221,8 +246,8 @@ static void canvas_frame(void){
 static void frame_panel(int x,int y,int w,int h){rect(x+2,y+3,w,h,RGB(8,12,25));rect(x,y,w,h,panel());rect(x,y,w,3,accent());}
 static void overlay_panels(void){
  frame_panel(5,18,106,143);textat(13,27,"TOOLS",ink(),2);
- const char *items[]={"UNDO","REDO","PICK COLOR","GRID","PREVIEW"};
- for(int i=0;i<5;i++){int yy=52+i*20;if(panel_focus==0&&option_item==i)rect(9,yy-3,97,18,accent());
+ const char *items[]={"UNDO","REDO","PICK COLOR","GRID","PREVIEW","CIRCLE"};
+ for(int i=0;i<6;i++){int yy=52+i*20;if(panel_focus==0&&option_item==i)rect(9,yy-3,97,18,accent());
   textat(14,yy,items[i],panel_focus==0&&option_item==i?bg():ink(),2);}
  frame_panel(346,18,129,204);textat(355,27,"PALETTES",ink(),2);
  for(int i=0;i<9;i++){int yy=48+i*17;if(panel_focus==1&&palette_cursor==i)rect(351,yy-2,119,16,accent());
@@ -284,6 +309,7 @@ static void tool_activate(void){
  if(option_item==0)undo();else if(option_item==1)redo();else if(option_item==2)sample();
  else if(option_item==3){grid_mode=grid_mode%3+1;msg("GRID CHANGED");}
  else if(option_item==4){clean_preview=!clean_preview;show_panels=0;msg("PREVIEW TOGGLE");}
+ else if(option_item==5){circle_active=1;circle_x=cursor_x;circle_y=cursor_y;circle_radius=4;show_panels=0;msg("DPAD SIZE ANALOG MOVE");}
 }
 int main(int argc,char **argv){
  (void)argc;(void)argv;setup_callbacks();sceCtrlSetSamplingCycle(0);sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
@@ -322,10 +348,22 @@ int main(int argc,char **argv){
    }
   }else if(pressed&PSP_CTRL_START){menu=1;menu_item=0;clean_preview=0;}
   else if(pressed&PSP_CTRL_SELECT){show_panels=!show_panels;clean_preview=0;}
-  else if(show_panels){
+  else if(circle_active){
+   if(pressed&PSP_CTRL_CROSS)circle_commit();
+   else if(pressed&PSP_CTRL_SQUARE){circle_active=0;msg("CIRCLE CANCELLED");}
+   else{
+    if(move&&left&&circle_radius>1)circle_radius--;
+    if(move&&right&&circle_radius<size-1)circle_radius++;
+    if(move&&up&&circle_y>0)circle_y--;
+    if(move&&down&&circle_y<size-1)circle_y++;
+    if(pad.Lx<88&&circle_x>0)circle_x--;else if(pad.Lx>168&&circle_x<size-1)circle_x++;
+    if(pad.Ly<88&&circle_y>0)circle_y--;else if(pad.Ly>168&&circle_y<size-1)circle_y++;
+    cursor_x=circle_x;cursor_y=circle_y;adjust_view();
+   }
+  }else if(show_panels){
    if(pressed&PSP_CTRL_LTRIGGER)panel_focus=0;if(pressed&PSP_CTRL_RTRIGGER)panel_focus=1;
-   if(move&&up){if(panel_focus==0)option_item=(option_item+4)%5;else palette_cursor=(palette_cursor+8)%9;}
-   if(move&&down){if(panel_focus==0)option_item=(option_item+1)%5;else palette_cursor=(palette_cursor+1)%9;}
+   if(move&&up){if(panel_focus==0)option_item=(option_item+5)%6;else palette_cursor=(palette_cursor+8)%9;}
+   if(move&&down){if(panel_focus==0)option_item=(option_item+1)%6;else palette_cursor=(palette_cursor+1)%9;}
    if(pressed&PSP_CTRL_CROSS){if(panel_focus==0)tool_activate();else{select_palette(palette_cursor);msg(palette_names[palette_id]);}}
    if(pressed&PSP_CTRL_CIRCLE){show_panels=0;next_zoom();}
   }else{
