@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-PSP_MODULE_INFO("PSP Pixel Studio",0,2,5);
+PSP_MODULE_INFO("PSP Pixel Studio",0,2,6);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
 #define SW 480
 #define SH 272
@@ -17,8 +17,12 @@ PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
 #define TRANSPARENT 0u
 #define RGB(r,g,b) (0xff000000u | ((unsigned)(b)<<16) | ((unsigned)(g)<<8) | (unsigned)(r))
 #define SAVE_DIR "ms0:/PSP/PIXELSTUDIO"
+#define TITLE_RAW SAVE_DIR "/PIXELSTUDIO_TITLE.RAW"
 
 typedef struct { unsigned color; short x,y,z; } Vertex;
+typedef struct { short u,v,x,y,z; } TexVertex;
+static uint16_t __attribute__((aligned(16))) title_pixels[512*512];
+static int title_ready=0,title_active=0;
 static unsigned int __attribute__((aligned(16))) display_list[262144];
 static uint32_t artwork[MAXC*MAXC];
 static uint32_t palette[64];
@@ -300,6 +304,32 @@ static void menu_frame(void){
  else if(menu==8){textat(120,42,"DISCARD CHANGES?",ink(),2);textat(120,94,"X LOAD",accent(),2);textat(120,126,"O CANCEL",ink(),2);}
  else if(menu==7){textat(120,42,"EXIT TO PSP?",ink(),2);textat(120,94,"X YES",accent(),2);textat(120,126,"O CANCEL",ink(),2);}
 }
+/* 512x512 RGB565 source, 480x272 visible image. Kept outside EBOOT for easy artwork swaps. */
+static void title_load(void){
+ SceUID fd=sceIoOpen(TITLE_RAW,PSP_O_RDONLY,0777);
+ if(fd<0)return;
+ int got=sceIoRead(fd,title_pixels,sizeof(title_pixels));sceIoClose(fd);
+ if(got!=(int)sizeof(title_pixels))return;
+ sceKernelDcacheWritebackAll();title_ready=1;title_active=1;
+}
+static void title_frame(void){
+ sceGuStart(GU_DIRECT,display_list);
+ sceGuClearColor(RGB(19,143,206));sceGuClear(GU_COLOR_BUFFER_BIT);
+ if(title_ready){
+  sceGuEnable(GU_TEXTURE_2D);
+  sceGuTexMode(GU_PSM_5650,0,0,0);
+  sceGuTexImage(0,512,512,512,title_pixels);
+  sceGuTexFunc(GU_TFX_REPLACE,GU_TCC_RGB);
+  sceGuTexFilter(GU_LINEAR,GU_LINEAR);
+  sceGuTexWrap(GU_CLAMP,GU_CLAMP);
+  TexVertex *v=(TexVertex*)sceGuGetMemory(2*sizeof(TexVertex));
+  v[0].u=0;v[0].v=0;v[0].x=0;v[0].y=0;v[0].z=0;
+  v[1].u=480;v[1].v=272;v[1].x=480;v[1].y=272;v[1].z=0;
+  sceGuDrawArray(GU_SPRITES,GU_TEXTURE_16BIT|GU_VERTEX_16BIT|GU_TRANSFORM_2D,2,0,v);
+  sceGuDisable(GU_TEXTURE_2D);
+ }
+ sceGuFinish();sceGuSync(0,0);sceDisplayWaitVblankStart();sceGuSwapBuffers();
+}
 static void frame(void){
  sceGuStart(GU_DIRECT,display_list);sceGuClearColor(bg());sceGuClear(GU_COLOR_BUFFER_BIT);
  canvas_frame();if(show_panels&&!clean_preview&&!menu)overlay_panels();
@@ -334,9 +364,14 @@ int main(int argc,char **argv){
  sceGuViewport(2048,2048,SW,SH);sceGuScissor(0,0,SW,SH);sceGuEnable(GU_SCISSOR_TEST);
  sceGuDisable(GU_DEPTH_TEST);sceGuDisable(GU_TEXTURE_2D);sceGuShadeModel(GU_FLAT);
  sceGuFinish();sceGuSync(0,0);sceDisplayWaitVblankStart();sceGuDisplay(GU_TRUE);
+ title_load();
  unsigned prev=0;int held=0;
  while(running){
   SceCtrlData pad;sceCtrlReadBufferPositive(&pad,1);unsigned now=pad.Buttons,pressed=now&~prev;
+  if(title_active){
+   if(pressed&PSP_CTRL_CROSS){title_active=0;prev=now;continue;}
+   title_frame();prev=now;continue;
+  }
   int left=(now&PSP_CTRL_LEFT)||(!(now&(PSP_CTRL_LEFT|PSP_CTRL_RIGHT))&&pad.Lx<88);
   int right=(now&PSP_CTRL_RIGHT)||(!(now&(PSP_CTRL_LEFT|PSP_CTRL_RIGHT))&&pad.Lx>168);
   int up=(now&PSP_CTRL_UP)||(!(now&(PSP_CTRL_UP|PSP_CTRL_DOWN))&&pad.Ly<88);
