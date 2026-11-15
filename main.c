@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-PSP_MODULE_INFO("PSP Pixel Studio",0,2,6);
+PSP_MODULE_INFO("PSP Pixel Studio",0,2,7);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
 #define SW 480
 #define SH 272
@@ -106,20 +106,37 @@ static unsigned bg(void){return RGB(191,235,244);}
 static unsigned panel(void){return RGB(43,151,193);}
 static unsigned accent(void){return RGB(151,241,247);}
 static unsigned ink(void){return RGB(255,255,255);}
-static unsigned deep(void){return RGB(17,82,116);}
+static unsigned deep(void){return RGB(18,79,107);}
+/* Small rounded-rectangle compositor. Alpha is applied by GU blending. */
+static unsigned rgba(int r,int g,int b,int a){
+ return ((unsigned)a<<24)|((unsigned)b<<16)|((unsigned)g<<8)|(unsigned)r;
+}
+static void round_rect(int x,int y,int w,int h,int radius,unsigned color){
+ if(w<=0||h<=0)return;
+ if(radius<0)radius=0;if(radius>w/2)radius=w/2;if(radius>h/2)radius=h/2;
+ for(int row=0;row<h;row++){
+  int edge=row<h/2?row:h-1-row;
+  int inset=0;
+  if(edge<radius){
+   int dy=radius-1-edge;
+   while(inset<radius&&(radius-inset)*(radius-inset)+dy*dy>radius*radius)inset++;
+  }
+  rect(x+inset,y+row,w-2*inset,1,color);
+ }
+}
 static void aero_glass(int x,int y,int w,int h){
- rect(x+2,y+3,w,h,RGB(42,110,142));
- rect(x,y,w,h,RGB(41,143,190));
- rect(x+1,y+1,w-2,h/3,RGB(100,205,232));
- rect(x+2,y+2,w-4,2,RGB(228,255,255));
- rect(x+1,y+h-3,w-2,2,RGB(16,104,155));
+ round_rect(x+2,y+3,w,h,10,rgba(11,60,96,90));
+ round_rect(x,y,w,h,10,rgba(12,111,178,192));
+ round_rect(x+2,y+2,w-4,h-4,9,rgba(54,181,228,80));
+ round_rect(x+3,y+3,w-6,h/4,8,rgba(244,255,255,105));
+ round_rect(x+5,y+4,w-10,2,1,rgba(255,255,255,195));
+ round_rect(x+4,y+h-7,w-8,3,1,rgba(4,89,151,90));
 }
 static void aero_choice(int x,int y,int w,int h){
- rect(x,y,w,h,RGB(217,252,255));
- rect(x+1,y+1,w-2,h/2,RGB(251,255,255));
- rect(x+1,y+h-3,w-2,2,RGB(110,217,228));
+ round_rect(x,y,w,h,7,rgba(99,204,55,235));
+ round_rect(x+2,y+1,w-4,h/2,6,rgba(236,255,189,205));
+ round_rect(x+2,y+h-4,w-4,2,1,rgba(31,140,61,130));
 }
-
 static void fit_view(void){
  int z=SH/size;if(SW/size<z)z=SW/size;if(z<1)z=1;if(z>16)z=16;
  zoom=z;view_x=view_y=0;
@@ -263,14 +280,14 @@ static void canvas_frame(void){
 }
 static void frame_panel(int x,int y,int w,int h){aero_glass(x,y,w,h);}
 static void overlay_panels(void){
- frame_panel(5,18,106,165);textat(13,27,"TOOLS",ink(),2);
+ frame_panel(5,18,106,165);textat(16,27,"TOOLS",ink(),2);
  const char *items[]={"UNDO","REDO","PICK COLOR","GRID","PREVIEW","CIRCLE"};
  for(int i=0;i<6;i++){int yy=52+i*20;if(panel_focus==0&&option_item==i)aero_choice(9,yy-3,97,18);
   textat(14,yy,items[i],panel_focus==0&&option_item==i?deep():ink(),2);}
- frame_panel(346,18,129,204);textat(355,27,"PALETTES",ink(),2);
+ frame_panel(346,18,129,204);textat(358,27,"PALETTES",ink(),2);
  for(int i=0;i<9;i++){int yy=48+i*17;if(panel_focus==1&&palette_cursor==i)aero_choice(351,yy-2,119,16);
   textat(356,yy,palette_names[i],panel_focus==1&&palette_cursor==i?deep():ink(),2);}
- for(int i=0;i<palette_count&&i<8;i++)rect(356+i*14,203,12,10,palette[i]);
+ for(int i=0;i<palette_count&&i<8;i++){round_rect(355+i*14,202,14,13,3,rgba(255,255,255,235));rect(357+i*14,204,10,9,palette[i]);}
 }
 static void mini_hud(void){
  if(clean_preview)return;
@@ -289,7 +306,7 @@ static void menu_frame(void){
   for(int i=0;i<4;i++){int yy=82+i*30;if(i==new_item)aero_choice(115,yy-4,247,21);snprintf(b,sizeof(b),"%d X %d",sizes[i],sizes[i]);textat(125,yy,b,i==new_item?deep():ink(),2);}}
  else if(menu==3){textat(120,42,"OPTIONS",ink(),2);
   const char *it[]={"AERO STYLE","GRID GUIDE","GRID LINES","BACK"};
-  for(int i=0;i<4;i++){int yy=80+i*30;if(i==option_item)rect(115,yy-4,247,21,accent());
+  for(int i=0;i<4;i++){int yy=80+i*30;if(i==option_item)aero_choice(115,yy-4,247,21);
    if(i==0)snprintf(b,sizeof(b),"FRUTIGER AERO");
    if(i==1)snprintf(b,sizeof(b),"GRID %s",grid_mode==1?"HALF":grid_mode==2?"QUARTER":"EIGHTH");
    if(i==2)snprintf(b,sizeof(b),"LINES %s",show_grid?"ON":"OFF");
@@ -363,6 +380,7 @@ int main(int argc,char **argv){
  sceGuDepthBuffer((void*)0x110000,PITCH);sceGuOffset(2048-SW/2,2048-SH/2);
  sceGuViewport(2048,2048,SW,SH);sceGuScissor(0,0,SW,SH);sceGuEnable(GU_SCISSOR_TEST);
  sceGuDisable(GU_DEPTH_TEST);sceGuDisable(GU_TEXTURE_2D);sceGuShadeModel(GU_FLAT);
+ sceGuEnable(GU_BLEND);sceGuBlendFunc(GU_ADD,GU_SRC_ALPHA,GU_ONE_MINUS_SRC_ALPHA,0,0);
  sceGuFinish();sceGuSync(0,0);sceDisplayWaitVblankStart();sceGuDisplay(GU_TRUE);
  title_load();
  unsigned prev=0;int held=0;
