@@ -156,18 +156,23 @@ static void round_rect(int x,int y,int w,int h,int radius,unsigned color){
   rect(x+inset,y+row,w-2*inset,1,color);
  }
 }
+/* V2.4.3: layered translucent glass with a crisp rim and softer specular strip. */
 static void aero_glass(int x,int y,int w,int h){
- round_rect(x+2,y+3,w,h,10,rgba(11,60,96,90));
- round_rect(x,y,w,h,10,rgba(12,111,178,192));
- round_rect(x+2,y+2,w-4,h-4,9,rgba(54,181,228,80));
- round_rect(x+3,y+3,w-6,h/4,8,rgba(244,255,255,105));
- round_rect(x+5,y+4,w-10,2,1,rgba(255,255,255,195));
- round_rect(x+4,y+h-7,w-8,3,1,rgba(4,89,151,90));
+ if(w<12||h<12)return;
+ round_rect(x+2,y+3,w,h,10,rgba(9,51,83,82));       /* floating shadow */
+ round_rect(x,y,w,h,10,rgba(9,96,160,200));         /* deep aqua frame */
+ round_rect(x+1,y+1,w-2,h-2,9,rgba(165,239,255,55));/* outer luminous rim */
+ round_rect(x+3,y+3,w-6,h-6,8,rgba(48,171,218,58)); /* glass body */
+ round_rect(x+3,y+3,w-6,h/4,7,rgba(245,255,255,108));/* broad top reflection */
+ round_rect(x+6,y+4,w-12,1,1,rgba(255,255,255,205));/* sharp highlight */
+ round_rect(x+5,y+h-7,w-10,2,1,rgba(2,68,123,85)); /* lower depth */
 }
 static void aero_choice(int x,int y,int w,int h){
- round_rect(x,y,w,h,7,rgba(99,204,55,235));
- round_rect(x+2,y+1,w-4,h/2,6,rgba(236,255,189,205));
- round_rect(x+2,y+h-4,w-4,2,1,rgba(31,140,61,130));
+ round_rect(x,y,w,h,7,rgba(53,153,46,220));       /* green edge */
+ round_rect(x+1,y+1,w-2,h-2,6,rgba(157,238,89,210));
+ round_rect(x+2,y+1,w-4,h/2,6,rgba(247,255,204,165));
+ round_rect(x+3,y+2,w-6,1,1,rgba(255,255,255,190));
+ round_rect(x+2,y+h-4,w-4,2,1,rgba(24,115,48,115));
 }
 static void fit_view(void){
  int z=SH/size;if(SW/size<z)z=SW/size;if(z<1)z=1;if(z>16)z=16;
