@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-PSP_MODULE_INFO("PSP Pixel Studio",0,2,0);
+PSP_MODULE_INFO("PSP Pixel Studio",0,2,2);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
 #define SW 480
 #define SH 272
@@ -29,10 +29,13 @@ static int menu=0,menu_item=0,option_item=0,new_item=2,confirm_new=0;
 static int running=1,status_frames=0;
 static int slot=0, slot_action=0, pending=0, panel_focus=0, palette_cursor=0;
 static int show_grid=1, clean_preview=0;
+static int circle_active=0,circle_radius=4,circle_x=0,circle_y=0;
 static int offset_x=0,offset_y=0;
 #define HIST 64
+#define MAX_ACTION_PIXELS 512
 typedef struct {uint16_t x,y;uint32_t before,after;} Change;
-static Change history[HIST];static int hcount=0,hpos=0;
+typedef struct {uint16_t count;Change pixels[MAX_ACTION_PIXELS];} Action;
+static Action history[HIST];static int hcount=0,hpos=0;
 static char status[80]="";
 static const char *palette_names[]={"RGB64","AMMO-8","CL8UDS","LAVA-GB","MULFOK32","NYX8","BLESSING","SWEETIE16","TWILIGHT5"};
 static const char *palette_hex[]={
@@ -122,15 +125,51 @@ static void next_zoom(void){
  int next=0;for(int i=0;i<8;i++)if(steps[i]>zoom){next=steps[i];break;}
  if(next)set_zoom(next);else {fit_view();adjust_view();placement();msg("FIT CANVAS");}
 }
-static void edit_pixel(uint32_t value){
- int idx=cursor_y*size+cursor_x;uint32_t old=artwork[idx];if(old==value)return;
+static void begin_action(void){
  if(hpos<hcount)hcount=hpos;
- if(hcount==HIST){memmove(history,history+1,(HIST-1)*sizeof(Change));hcount--;hpos--;}
- history[hpos].x=cursor_x;history[hpos].y=cursor_y;history[hpos].before=old;history[hpos].after=value;
- hpos++;hcount=hpos;artwork[idx]=value;dirty=1;
+ if(hcount==HIST){memmove(history,history+1,(HIST-1)*sizeof(Action));hcount--;hpos--;}
+ history[hpos].count=0;
 }
-static void undo(void){if(hpos<=0){msg("NOTHING TO UNDO");return;}Change *c=&history[--hpos];artwork[c->y*size+c->x]=c->before;dirty=1;msg("UNDO");}
-static void redo(void){if(hpos>=hcount){msg("NOTHING TO REDO");return;}Change *c=&history[hpos++];artwork[c->y*size+c->x]=c->after;dirty=1;msg("REDO");}
+static void action_pixel(int x,int y,uint32_t value){
+ if(x<0||y<0||x>=size||y>=size)return;
+ int idx=y*size+x;uint32_t old=artwork[idx];if(old==value)return;
+ Action *a=&history[hpos];
+ for(int i=0;i<a->count;i++)if(a->pixels[i].x==x&&a->pixels[i].y==y){a->pixels[i].after=value;artwork[idx]=value;return;}
+ if(a->count>=MAX_ACTION_PIXELS)return;
+ Change *c=&a->pixels[a->count++];c->x=x;c->y=y;c->before=old;c->after=value;
+ artwork[idx]=value;dirty=1;
+}
+static void end_action(void){if(history[hpos].count){hpos++;hcount=hpos;}}
+static void edit_pixel(uint32_t value){begin_action();action_pixel(cursor_x,cursor_y,value);end_action();}
+static void undo(void){
+ if(hpos<=0){msg("NOTHING TO UNDO");return;}
+ Action *a=&history[--hpos];for(int i=0;i<a->count;i++){Change *c=&a->pixels[i];artwork[c->y*size+c->x]=c->before;}
+ dirty=1;msg("UNDO");
+}
+static void redo(void){
+ if(hpos>=hcount){msg("NOTHING TO REDO");return;}
+ Action *a=&history[hpos++];for(int i=0;i<a->count;i++){Change *c=&a->pixels[i];artwork[c->y*size+c->x]=c->after;}
+ dirty=1;msg("REDO");
+}
+/* Midpoint circle: exact integer pixel outline, shared by preview and commit. */
+static void circle_point(int x,int y,int commit){
+ if(x<0||y<0||x>=size||y>=size)return;
+ if(!commit&&(x<view_x||y<view_y))return;
+ if(commit){action_pixel(x,y,palette[chosen]);return;}
+ int px=offset_x+(x-view_x)*zoom,py=offset_y+(y-view_y)*zoom;
+ rect(px,py,zoom,zoom,RGB(255,231,88));
+}
+static void circle_outline(int cx,int cy,int r,int commit){
+ int x=r,y=0,error=1-r;
+ while(x>=y){
+  circle_point(cx+x,cy+y,commit);circle_point(cx+y,cy+x,commit);
+  circle_point(cx-y,cy+x,commit);circle_point(cx-x,cy+y,commit);
+  circle_point(cx-x,cy-y,commit);circle_point(cx-y,cy-x,commit);
+  circle_point(cx+y,cy-x,commit);circle_point(cx+x,cy-y,commit);
+  y++;if(error<0)error+=2*y+1;else{x--;error+=2*(y-x)+1;}
+ }
+}
+static void commit_circle(void){begin_action();circle_outline(circle_x,circle_y,circle_radius,1);end_action();circle_active=0;msg("CIRCLE PLACED");}
 static void sample(void){
  uint32_t v=artwork[cursor_y*size+cursor_x];if(!v){msg("TRANSPARENT PIXEL");return;}
  for(int i=0;i<palette_count;i++)if(palette[i]==v){chosen=i;msg("COLOR PICKED");return;}
@@ -212,6 +251,7 @@ static void canvas_frame(void){
    if(zoom>=4||thick==2)rect(offset_x,y,right-offset_x,thick,(i%sub==0)?accent():RGB(113,124,143));
   }
  }
+ if(circle_active)circle_outline(circle_x,circle_y,circle_radius,0);
  if(!clean_preview){
   int x=offset_x+(cursor_x-view_x)*zoom,y=offset_y+(cursor_y-view_y)*zoom;
   unsigned mark=theme?RGB(255,227,91):RGB(255,72,123);
@@ -220,9 +260,9 @@ static void canvas_frame(void){
 }
 static void frame_panel(int x,int y,int w,int h){rect(x+2,y+3,w,h,RGB(8,12,25));rect(x,y,w,h,panel());rect(x,y,w,3,accent());}
 static void overlay_panels(void){
- frame_panel(5,18,106,143);textat(13,27,"TOOLS",ink(),2);
- const char *items[]={"UNDO","REDO","PICK COLOR","GRID","PREVIEW"};
- for(int i=0;i<5;i++){int yy=52+i*20;if(panel_focus==0&&option_item==i)rect(9,yy-3,97,18,accent());
+ frame_panel(5,18,106,165);textat(13,27,"TOOLS",ink(),2);
+ const char *items[]={"UNDO","REDO","PICK COLOR","GRID","PREVIEW","CIRCLE"};
+ for(int i=0;i<6;i++){int yy=52+i*20;if(panel_focus==0&&option_item==i)rect(9,yy-3,97,18,accent());
   textat(14,yy,items[i],panel_focus==0&&option_item==i?bg():ink(),2);}
  frame_panel(346,18,129,204);textat(355,27,"PALETTES",ink(),2);
  for(int i=0;i<9;i++){int yy=48+i*17;if(panel_focus==1&&palette_cursor==i)rect(351,yy-2,119,16,accent());
@@ -284,6 +324,7 @@ static void tool_activate(void){
  if(option_item==0)undo();else if(option_item==1)redo();else if(option_item==2)sample();
  else if(option_item==3){grid_mode=grid_mode%3+1;msg("GRID CHANGED");}
  else if(option_item==4){clean_preview=!clean_preview;show_panels=0;msg("PREVIEW TOGGLE");}
+ else if(option_item==5){circle_active=1;circle_x=cursor_x;circle_y=cursor_y;circle_radius=4;show_panels=0;msg("DPAD SIZE ANALOG MOVE");}
 }
 int main(int argc,char **argv){
  (void)argc;(void)argv;setup_callbacks();sceCtrlSetSamplingCycle(0);sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
@@ -320,21 +361,36 @@ int main(int argc,char **argv){
      if(option_item==3)menu=1;
     }else if(pressed&PSP_CTRL_CROSS){if(menu==1)open_menu_choice();else if(menu==2){if(dirty)menu=4;else apply_new();}}
    }
-  }else if(pressed&PSP_CTRL_START){menu=1;menu_item=0;clean_preview=0;}
+  }else if(pressed&PSP_CTRL_START){menu=1;menu_item=0;clean_preview=0;circle_active=0;}
   else if(pressed&PSP_CTRL_SELECT){show_panels=!show_panels;clean_preview=0;}
   else if(show_panels){
+   if(pressed&PSP_CTRL_TRIANGLE){show_grid=!show_grid;msg(show_grid?"GRID ON":"GRID OFF");}
    if(pressed&PSP_CTRL_LTRIGGER)panel_focus=0;if(pressed&PSP_CTRL_RTRIGGER)panel_focus=1;
-   if(move&&up){if(panel_focus==0)option_item=(option_item+4)%5;else palette_cursor=(palette_cursor+8)%9;}
-   if(move&&down){if(panel_focus==0)option_item=(option_item+1)%5;else palette_cursor=(palette_cursor+1)%9;}
+   if(move&&up){if(panel_focus==0)option_item=(option_item+5)%6;else palette_cursor=(palette_cursor+8)%9;}
+   if(move&&down){if(panel_focus==0)option_item=(option_item+1)%6;else palette_cursor=(palette_cursor+1)%9;}
    if(pressed&PSP_CTRL_CROSS){if(panel_focus==0)tool_activate();else{select_palette(palette_cursor);msg(palette_names[palette_id]);}}
    if(pressed&PSP_CTRL_CIRCLE){show_panels=0;next_zoom();}
+  }else if(circle_active){
+   /* D-pad changes radius; analog moves the preview center. X commits, Square cancels. */
+   if(pressed&PSP_CTRL_SQUARE){circle_active=0;msg("CIRCLE CANCELLED");}
+   else if(pressed&PSP_CTRL_CROSS)commit_circle();
+   else{
+    if(move&&(now&PSP_CTRL_RIGHT)&&circle_radius<size)circle_radius++;
+    if(move&&(now&PSP_CTRL_LEFT)&&circle_radius>1)circle_radius--;
+    if(move&&pad.Lx<88&&circle_x>0)circle_x--;
+    if(move&&pad.Lx>168&&circle_x<size-1)circle_x++;
+    if(move&&pad.Ly<88&&circle_y>0)circle_y--;
+    if(move&&pad.Ly>168&&circle_y<size-1)circle_y++;
+    cursor_x=circle_x;cursor_y=circle_y;adjust_view();
+   }
+   if(pressed&PSP_CTRL_TRIANGLE){show_grid=!show_grid;msg(show_grid?"GRID ON":"GRID OFF");}
   }else{
    if(move){if(left&&cursor_x>0)cursor_x--;else if(right&&cursor_x<size-1)cursor_x++;
     if(up&&cursor_y>0)cursor_y--;else if(down&&cursor_y<size-1)cursor_y++;adjust_view();}
    if(pressed&PSP_CTRL_LTRIGGER)chosen=(chosen+palette_count-1)%palette_count;
    if(pressed&PSP_CTRL_RTRIGGER)chosen=(chosen+1)%palette_count;
    if(pressed&PSP_CTRL_CIRCLE)next_zoom();
-   if(pressed&PSP_CTRL_TRIANGLE)grid_mode=grid_mode%3+1;
+   if(pressed&PSP_CTRL_TRIANGLE){show_grid=!show_grid;msg(show_grid?"GRID ON":"GRID OFF");}
    if((now&PSP_CTRL_CROSS)&&((pressed&PSP_CTRL_CROSS)||move))edit_pixel(palette[chosen]);
    if((now&PSP_CTRL_SQUARE)&&((pressed&PSP_CTRL_SQUARE)||move))edit_pixel(TRANSPARENT);
   }
