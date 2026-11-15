@@ -331,6 +331,9 @@ static void title_load(void){
 }
 static void title_frame(void){
  sceGuStart(GU_DIRECT,display_list);
+ // The RGB565 title texture has no alpha channel; draw it without glass-panel blending.
+ sceGuDisable(GU_BLEND);
+ sceGuColor(0xFFFFFFFF);
  sceGuClearColor(RGB(19,143,206));sceGuClear(GU_COLOR_BUFFER_BIT);
  if(title_ready){
   sceGuEnable(GU_TEXTURE_2D);
@@ -345,6 +348,8 @@ static void title_frame(void){
   sceGuDrawArray(GU_SPRITES,GU_TEXTURE_16BIT|GU_VERTEX_16BIT|GU_TRANSFORM_2D,2,0,v);
   sceGuDisable(GU_TEXTURE_2D);
  }
+ // Restore alpha blending for the editor's translucent Aero panels.
+ sceGuEnable(GU_BLEND);
  sceGuFinish();sceGuSync(0,0);sceDisplayWaitVblankStart();sceGuSwapBuffers();
 }
 static void frame(void){
