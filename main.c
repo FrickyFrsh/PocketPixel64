@@ -283,8 +283,41 @@ static void circle_commit(void){
  memcpy(circle_after,artwork,sizeof(artwork));
  circle_undo=1;circle_redo=0;hcount=hpos=0;dirty=1;circle_active=0;msg("CIRCLE PLACED");
 }
+/* V2.4.4: lightweight procedural Aero wallpaper ONLY outside the visible canvas.
+ * No image texture or extra VRAM; canvas pixels and PNG exports are untouched. */
+static void workspace_margins(void){
+ placement();
+ int left=offset_x,top=offset_y;
+ int right=offset_x+size*zoom,bottom=offset_y+size*zoom;
+ if(left<0)left=0;if(top<0)top=0;
+ if(right>SW)right=SW;if(bottom>SH)bottom=SH;
+ for(int y=0;y<SH;y+=4){
+  int band=SH-y<4?SH-y:4;
+  int r=213-y/15,g=245-y/24,b=251-y/50;
+  if(r<160)r=160;if(g<200)g=200;
+  unsigned sky=RGB(r,g,b);
+  int wave=y+(y/5)%13;
+  if(wave>180&&wave<210)sky=RGB(164,224,242);
+  if(wave>=210&&wave<236)sky=RGB(136,211,236);
+  if(y<top||y>=bottom){rect(0,y,SW,band,sky);}
+  else{
+   if(left>0)rect(0,y,left,band,sky);
+   if(right<SW)rect(right,y,SW-right,band,sky);
+  }
+ }
+ /* Soft bubble accents, also clipped to the side margins. */
+ for(int i=0;i<6;i++){
+  int x=(i*89+21)%SW,y=(i*47+19)%SH;
+  if(x+8<=left||x>=right||y+8<=top||y>=bottom){
+   rect(x+2,y,4,1,rgba(255,255,255,165));
+   rect(x,y+2,1,4,rgba(255,255,255,125));
+   rect(x+7,y+2,1,4,rgba(89,179,215,95));
+   rect(x+2,y+7,4,1,rgba(89,179,215,95));
+  }
+ }
+}
 static void canvas_frame(void){
- rect(0,0,SW,SH,bg());placement();
+ workspace_margins();placement();
  int cols=(SW-offset_x+zoom-1)/zoom,rows=(SH-offset_y+zoom-1)/zoom;
  if(cols>size)cols=size;if(rows>size)rows=size;
  for(int sy=0;sy<rows;sy++)for(int sx=0;sx<cols;sx++){
