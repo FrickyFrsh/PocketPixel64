@@ -311,11 +311,28 @@ static void canvas_frame(void){
  }
 }
 static void frame_panel(int x,int y,int w,int h){aero_glass(x,y,w,h);}
+/* V2.4.2: tiny monochrome 11x11 tool icons, drawn directly with GU rectangles.
+ * No external texture, VRAM allocation, or changes to input handling. */
+static const char *tool_icon[6][11]={
+ { "00011100000","00100010000","01000000000","01001111100","10001000100","10001000100","10000111100","01000000000","01000000000","00100010000","00011100000" }, /* undo */
+ { "00000111000","00001000100","00000000010","00111110010","00100010001","00100010001","00111100001","00000000010","00000000010","00001000100","00000111000" }, /* redo */
+ { "00000000110","00000001100","00000011000","00000110000","00001100000","00011000000","00110000000","01100000000","11100000000","01110000000","00111000000" }, /* eyedropper */
+ { "10101010101","00000000000","10101010101","00000000000","10101010101","00000000000","10101010101","00000000000","10101010101","00000000000","10101010101" }, /* grid */
+ { "00000100000","00011111000","01100000110","10000000001","10000100001","10001110001","10000100001","10000000001","01100000110","00011111000","00000100000" }, /* preview eye */
+ { "00011111000","00100000100","01000000010","10000000001","10000000001","10000000001","10000000001","01000000010","00100000100","00011111000","00000000000" } /* circle */
+};
+static void draw_tool_icon(int id,int x,int y,unsigned color){
+ if(id<0||id>=6)return;
+ for(int row=0;row<11;row++)for(int col=0;col<11;col++)
+  if(tool_icon[id][row][col]=='1')rect(x+col,y+row,1,1,color);
+}
 static void overlay_panels(void){
  frame_panel(5,18,106,165);textat(16,27,"TOOLS",ink(),2);
  const char *items[]={"UNDO","REDO","PICK COLOR","GRID","PREVIEW","CIRCLE"};
  for(int i=0;i<6;i++){int yy=52+i*20;if(panel_focus==0&&option_item==i)aero_choice(9,yy-3,97,18);
-  textat(14,yy,items[i],panel_focus==0&&option_item==i?deep():ink(),2);}
+  unsigned label_color=panel_focus==0&&option_item==i?deep():ink();
+  draw_tool_icon(i,14,yy,label_color);
+  textat(30,yy+2,items[i],label_color,2);}
  frame_panel(346,18,129,204);textat(358,27,"PALETTES",ink(),2);
  for(int i=0;i<9;i++){int yy=48+i*17;if(panel_focus==1&&palette_cursor==i)aero_choice(351,yy-2,119,16);
   textat(356,yy,palette_names[i],panel_focus==1&&palette_cursor==i?deep():ink(),2);}
