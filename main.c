@@ -327,6 +327,12 @@ static void title_load(void){
  if(fd<0)return;
  int got=sceIoRead(fd,title_pixels,sizeof(title_pixels));sceIoClose(fd);
  if(got!=(int)sizeof(title_pixels))return;
+ // RAW was packed as conventional RGB565; PSP GU_PSM_5650 expects reversed R/B bitfields.
+ // Swap only the title texture's red and blue channels, preserving green and the editor palette.
+ for(int i=0;i<512*512;i++){
+  uint16_t p=title_pixels[i];
+  title_pixels[i]=(uint16_t)((((p&0x001F)<<11)|(p&0x07E0)|((p&0xF800)>>11)));
+ }
  sceKernelDcacheWritebackAll();title_ready=1;title_active=1;
 }
 static void title_frame(void){
