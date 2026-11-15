@@ -1,11 +1,10 @@
 TARGET = EBOOT
 OBJS = main.o
-CFLAGS = -O2 -G0 -Wall -Wextra
+CFLAGS = -O2 -G0 -Wall -Wextra -std=gnu99
 CXXFLAGS = $(CFLAGS)
 ASFLAGS = $(CFLAGS)
-LIBS = -lpspgu -lpspgum -lpspdisplay -lpspctrl
+LIBS = -lpspgu -lpspdisplay -lpspctrl
 EXTRA_TARGETS = EBOOT.PBP
-PSP_EBOOT_TITLE = Pocket Pixel 64
-PSP_EBOOT_ICON =
+PSP_EBOOT_TITLE = PSP Pixel Studio V2
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
