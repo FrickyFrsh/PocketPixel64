@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-PSP_MODULE_INFO("PSP Pixel Studio",0,2,4);
+PSP_MODULE_INFO("PSP Pixel Studio",0,2,5);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
 #define SW 480
 #define SH 272
@@ -97,10 +97,24 @@ static const char *glyph(char c){
 static void textat(int x,int y,const char *s,unsigned color,int scale){
  for(;*s;s++,x+=4*scale){const char *g=glyph(*s);for(int i=0;i<15;i++)if(g[i]=='1')rect(x+(i%3)*scale,y+(i/3)*scale,scale,scale,color);}
 }
-static unsigned bg(void){return theme?RGB(13,16,31):RGB(24,65,84);}
-static unsigned panel(void){return theme?RGB(33,30,65):RGB(40,113,132);}
-static unsigned accent(void){return theme?RGB(255,90,188):RGB(123,236,225);}
-static unsigned ink(void){return RGB(242,249,255);}
+/* Frutiger Aero: luminous aqua glass, no extra texture allocations. */
+static unsigned bg(void){return RGB(191,235,244);}
+static unsigned panel(void){return RGB(43,151,193);}
+static unsigned accent(void){return RGB(151,241,247);}
+static unsigned ink(void){return RGB(255,255,255);}
+static unsigned deep(void){return RGB(17,82,116);}
+static void aero_glass(int x,int y,int w,int h){
+ rect(x+2,y+3,w,h,RGB(42,110,142));
+ rect(x,y,w,h,RGB(41,143,190));
+ rect(x+1,y+1,w-2,h/3,RGB(100,205,232));
+ rect(x+2,y+2,w-4,2,RGB(228,255,255));
+ rect(x+1,y+h-3,w-2,2,RGB(16,104,155));
+}
+static void aero_choice(int x,int y,int w,int h){
+ rect(x,y,w,h,RGB(217,252,255));
+ rect(x+1,y+1,w-2,h/2,RGB(251,255,255));
+ rect(x+1,y+h-3,w-2,2,RGB(110,217,228));
+}
 
 static void fit_view(void){
  int z=SH/size;if(SW/size<z)z=SW/size;if(z<1)z=1;if(z>16)z=16;
@@ -243,39 +257,39 @@ static void canvas_frame(void){
   rect(x,y,zoom,1,mark);rect(x,y+zoom-1,zoom,1,mark);rect(x,y,1,zoom,mark);rect(x+zoom-1,y,1,zoom,mark);
  }
 }
-static void frame_panel(int x,int y,int w,int h){rect(x+2,y+3,w,h,RGB(8,12,25));rect(x,y,w,h,panel());rect(x,y,w,3,accent());}
+static void frame_panel(int x,int y,int w,int h){aero_glass(x,y,w,h);}
 static void overlay_panels(void){
- frame_panel(5,18,106,143);textat(13,27,"TOOLS",ink(),2);
+ frame_panel(5,18,106,165);textat(13,27,"TOOLS",ink(),2);
  const char *items[]={"UNDO","REDO","PICK COLOR","GRID","PREVIEW","CIRCLE"};
- for(int i=0;i<6;i++){int yy=52+i*20;if(panel_focus==0&&option_item==i)rect(9,yy-3,97,18,accent());
-  textat(14,yy,items[i],panel_focus==0&&option_item==i?bg():ink(),2);}
+ for(int i=0;i<6;i++){int yy=52+i*20;if(panel_focus==0&&option_item==i)aero_choice(9,yy-3,97,18);
+  textat(14,yy,items[i],panel_focus==0&&option_item==i?deep():ink(),2);}
  frame_panel(346,18,129,204);textat(355,27,"PALETTES",ink(),2);
- for(int i=0;i<9;i++){int yy=48+i*17;if(panel_focus==1&&palette_cursor==i)rect(351,yy-2,119,16,accent());
-  textat(356,yy,palette_names[i],panel_focus==1&&palette_cursor==i?bg():ink(),2);}
+ for(int i=0;i<9;i++){int yy=48+i*17;if(panel_focus==1&&palette_cursor==i)aero_choice(351,yy-2,119,16);
+  textat(356,yy,palette_names[i],panel_focus==1&&palette_cursor==i?deep():ink(),2);}
  for(int i=0;i<palette_count&&i<8;i++)rect(356+i*14,203,12,10,palette[i]);
 }
 static void mini_hud(void){
  if(clean_preview)return;
- char b[60];rect(145,0,190,15,panel());snprintf(b,sizeof(b),"%dX%d Z%d %d,%d",size,size,zoom,cursor_x,cursor_y);
+ char b[60];aero_glass(145,0,190,15);snprintf(b,sizeof(b),"%dX%d Z%d %d,%d",size,size,zoom,cursor_x,cursor_y);
  textat(151,3,b,ink(),2);
  rect(337,1,12,12,palette[chosen]);
 }
 static const char *main_items[]={"NEW PROJECT","SAVE PROJECT","LOAD PROJECT","EXPORT PNG","CONTROLS","OPTIONS","EXIT"};
-static void menu_box(int x,int y,int w,int h){rect(x+3,y+3,w,h,RGB(6,9,18));rect(x,y,w,h,panel());rect(x,y,w,3,accent());}
+static void menu_box(int x,int y,int w,int h){aero_glass(x,y,w,h);}
 static void menu_frame(void){
  char b[80];int x=102,y=29,w=276,h=214;
  menu_box(x,y,w,h);
  if(menu==1){textat(119,40,"PSP PIXEL STUDIO",ink(),2);
-  for(int i=0;i<7;i++){int yy=69+i*23;if(i==menu_item)rect(111,yy-4,258,19,accent());textat(121,yy,main_items[i],i==menu_item?bg():ink(),2);}}
+  for(int i=0;i<7;i++){int yy=69+i*23;if(i==menu_item)aero_choice(111,yy-4,258,19);textat(121,yy,main_items[i],i==menu_item?deep():ink(),2);}}
  else if(menu==2){textat(120,42,"NEW CANVAS",ink(),2);int sizes[]={16,32,64,128};
-  for(int i=0;i<4;i++){int yy=82+i*30;if(i==new_item)rect(115,yy-4,247,21,accent());snprintf(b,sizeof(b),"%d X %d",sizes[i],sizes[i]);textat(125,yy,b,i==new_item?bg():ink(),2);}}
+  for(int i=0;i<4;i++){int yy=82+i*30;if(i==new_item)aero_choice(115,yy-4,247,21);snprintf(b,sizeof(b),"%d X %d",sizes[i],sizes[i]);textat(125,yy,b,i==new_item?deep():ink(),2);}}
  else if(menu==3){textat(120,42,"OPTIONS",ink(),2);
-  const char *it[]={"THEME","GRID GUIDE","GRID LINES","BACK"};
+  const char *it[]={"AERO STYLE","GRID GUIDE","GRID LINES","BACK"};
   for(int i=0;i<4;i++){int yy=80+i*30;if(i==option_item)rect(115,yy-4,247,21,accent());
-   if(i==0)snprintf(b,sizeof(b),"THEME %s",theme?"CYBER":"AERO");
+   if(i==0)snprintf(b,sizeof(b),"FRUTIGER AERO");
    if(i==1)snprintf(b,sizeof(b),"GRID %s",grid_mode==1?"HALF":grid_mode==2?"QUARTER":"EIGHTH");
    if(i==2)snprintf(b,sizeof(b),"LINES %s",show_grid?"ON":"OFF");
-   if(i==3)snprintf(b,sizeof(b),"BACK");textat(125,yy,b,i==option_item?bg():ink(),2);}}
+   if(i==3)snprintf(b,sizeof(b),"BACK");textat(125,yy,b,i==option_item?deep():ink(),2);}}
  else if(menu==4){textat(120,42,"UNSAVED CHANGES",ink(),2);textat(120,92,"X DISCARD",accent(),2);textat(120,124,"O CANCEL",ink(),2);}
  else if(menu==5){textat(120,42,"CONTROLS",ink(),2);
   const char *it[]={"DPAD STICK MOVE","X DRAW SQ ERASE","L R COLOR","O ZOOM","SELECT PANELS","START MENU","TRI GRID"};
@@ -290,7 +304,7 @@ static void frame(void){
  sceGuStart(GU_DIRECT,display_list);sceGuClearColor(bg());sceGuClear(GU_COLOR_BUFFER_BIT);
  canvas_frame();if(show_panels&&!clean_preview&&!menu)overlay_panels();
  if(!menu&&!show_panels)mini_hud();
- if(status_frames>0){rect(128,SH-17,230,17,panel());textat(135,SH-14,status,ink(),2);}
+ if(status_frames>0){aero_glass(128,SH-17,230,17);textat(135,SH-14,status,ink(),2);}
  if(menu)menu_frame();sceGuFinish();sceGuSync(0,0);sceDisplayWaitVblankStart();sceGuSwapBuffers();
 }
 static void apply_new(void){static const int sizes[]={16,32,64,128};init_canvas(sizes[new_item]);menu=0;msg("NEW PROJECT READY");}
@@ -340,7 +354,7 @@ int main(int argc,char **argv){
    else {int *index=menu==1?&menu_item:menu==2?&new_item:&option_item;int count=menu==1?7:4;
     if(move&&up)*index=(*index+count-1)%count;else if(move&&down)*index=(*index+1)%count;
     if(menu==3&&(pressed&(PSP_CTRL_CROSS|PSP_CTRL_LEFT|PSP_CTRL_RIGHT))){
-     if(option_item==0)theme=!theme;
+     if(option_item==0)msg("AERO STYLE ACTIVE");
      if(option_item==1)grid_mode=grid_mode%3+1;
      if(option_item==2)show_grid=!show_grid;
      if(option_item==3)menu=1;
