@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 PSP_MODULE_INFO("PSP Pixel Studio",0,2,0);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
@@ -26,6 +27,12 @@ static int size=64,cursor_x=0,cursor_y=0,zoom=3,view_x=0,view_y=0;
 static int show_panels=0,grid_mode=1,theme=0,dirty=0;
 static int menu=0,menu_item=0,option_item=0,new_item=2,confirm_new=0;
 static int running=1,status_frames=0;
+static int slot=0, slot_action=0, pending=0, panel_focus=0, palette_cursor=0;
+static int show_grid=1, clean_preview=0;
+static int offset_x=0,offset_y=0;
+#define HIST 64
+typedef struct {uint16_t x,y;uint32_t before,after;} Change;
+static Change history[HIST];static int hcount=0,hpos=0;
 static char status[80]="";
 static const char *palette_names[]={"RGB64","AMMO-8","CL8UDS","LAVA-GB","MULFOK32","NYX8","BLESSING","SWEETIE16","TWILIGHT5"};
 static const char *palette_hex[]={
@@ -92,120 +99,195 @@ static unsigned bg(void){return theme?RGB(13,16,31):RGB(24,65,84);}
 static unsigned panel(void){return theme?RGB(33,30,65):RGB(40,113,132);}
 static unsigned accent(void){return theme?RGB(255,90,188):RGB(123,236,225);}
 static unsigned ink(void){return RGB(242,249,255);}
-static void init_canvas(int n){size=n;memset(artwork,0,sizeof(artwork));cursor_x=cursor_y=view_x=view_y=0;zoom=n==16?12:n==32?6:n==64?3:2;dirty=0;}
+
+static void fit_view(void){
+ int z=SH/size;if(SW/size<z)z=SW/size;if(z<1)z=1;if(z>16)z=16;
+ zoom=z;view_x=view_y=0;
+}
+static void init_canvas(int n){size=n;memset(artwork,0,sizeof(artwork));cursor_x=cursor_y=0;dirty=0;hcount=hpos=0;fit_view();}
 static void adjust_view(void){
  int cols=SW/zoom,rows=SH/zoom;
- int mx=cols>6?2:0,my=rows>6?2:0;
- if(cursor_x<view_x+mx)view_x=cursor_x-mx;
- if(cursor_y<view_y+my)view_y=cursor_y-my;
- if(cursor_x>=view_x+cols-mx)view_x=cursor_x-cols+mx+1;
- if(cursor_y>=view_y+rows-my)view_y=cursor_y-rows+my+1;
- int maxx=size-cols,maxy=size-rows;if(maxx<0)maxx=0;if(maxy<0)maxy=0;
- if(view_x<0)view_x=0;if(view_y<0)view_y=0;
- if(view_x>maxx)view_x=maxx;if(view_y>maxy)view_y=maxy;
+ if(cols<size){int margin=cols>8?3:1;if(cursor_x<view_x+margin)view_x=cursor_x-margin;if(cursor_x>=view_x+cols-margin)view_x=cursor_x-cols+margin+1;}
+ if(rows<size){int margin=rows>8?3:1;if(cursor_y<view_y+margin)view_y=cursor_y-margin;if(cursor_y>=view_y+rows-margin)view_y=cursor_y-rows+margin+1;}
+ int mx=size-cols,my=size-rows;if(mx<0)mx=0;if(my<0)my=0;
+ if(view_x<0)view_x=0;if(view_y<0)view_y=0;if(view_x>mx)view_x=mx;if(view_y>my)view_y=my;
 }
-static void save_path(char *s,int n){snprintf(s,n,SAVE_DIR "/art_%d.pps",size);}
+static void placement(void){
+ int w=size*zoom,h=size*zoom;
+ offset_x=w<SW?(SW-w)/2:0;offset_y=h<SH?(SH-h)/2:0;
+}
+static void set_zoom(int z){zoom=z;adjust_view();placement();}
+static void next_zoom(void){
+ static const int steps[]={1,2,3,4,6,8,12,16};
+ int next=0;for(int i=0;i<8;i++)if(steps[i]>zoom){next=steps[i];break;}
+ if(next)set_zoom(next);else {fit_view();adjust_view();placement();msg("FIT CANVAS");}
+}
+static void edit_pixel(uint32_t value){
+ int idx=cursor_y*size+cursor_x;uint32_t old=artwork[idx];if(old==value)return;
+ if(hpos<hcount)hcount=hpos;
+ if(hcount==HIST){memmove(history,history+1,(HIST-1)*sizeof(Change));hcount--;hpos--;}
+ history[hpos].x=cursor_x;history[hpos].y=cursor_y;history[hpos].before=old;history[hpos].after=value;
+ hpos++;hcount=hpos;artwork[idx]=value;dirty=1;
+}
+static void undo(void){if(hpos<=0){msg("NOTHING TO UNDO");return;}Change *c=&history[--hpos];artwork[c->y*size+c->x]=c->before;dirty=1;msg("UNDO");}
+static void redo(void){if(hpos>=hcount){msg("NOTHING TO REDO");return;}Change *c=&history[hpos++];artwork[c->y*size+c->x]=c->after;dirty=1;msg("REDO");}
+static void sample(void){
+ uint32_t v=artwork[cursor_y*size+cursor_x];if(!v){msg("TRANSPARENT PIXEL");return;}
+ for(int i=0;i<palette_count;i++)if(palette[i]==v){chosen=i;msg("COLOR PICKED");return;}
+ if(palette_count<64){palette[palette_count]=v;chosen=palette_count++;msg("COLOR PICKED");}
+ else{palette[chosen]=v;msg("COLOR PICKED");}
+}
+static void slot_path(char *s,int n,int index){snprintf(s,n,SAVE_DIR "/project_%02d.pps",index+1);}
 static void save_art(void){
- sceIoMkdir(SAVE_DIR,0777);
- char path[96];save_path(path,sizeof(path));SceUID f=sceIoOpen(path,PSP_O_WRONLY|PSP_O_CREAT|PSP_O_TRUNC,0777);
- if(f<0){msg("SAVE FAILED");return;}
- unsigned char hdr[8]={'P','P','S','2',(unsigned char)size,0,0,0};
+ sceIoMkdir(SAVE_DIR,0777);char path[96];slot_path(path,sizeof(path),slot);
+ SceUID f=sceIoOpen(path,PSP_O_WRONLY|PSP_O_CREAT|PSP_O_TRUNC,0777);if(f<0){msg("SAVE FAILED");return;}
+ unsigned char hdr[8]={'P','P','S','3',(unsigned char)size,0,0,0};
  int a=sceIoWrite(f,hdr,8),b=sceIoWrite(f,artwork,size*size*4);sceIoClose(f);
  if(a==8&&b==size*size*4){dirty=0;msg("PROJECT SAVED");}else msg("SAVE FAILED");
 }
 static void load_art(void){
- char path[96];save_path(path,sizeof(path));SceUID f=sceIoOpen(path,PSP_O_RDONLY,0);
- if(f<0){msg("NO SAVE FOR THIS SIZE");return;}
+ char path[96];slot_path(path,sizeof(path),slot);SceUID f=sceIoOpen(path,PSP_O_RDONLY,0);if(f<0){msg("EMPTY SLOT");return;}
  unsigned char hdr[8];int a=sceIoRead(f,hdr,8);
- if(a!=8||memcmp(hdr,"PPS2",4)||hdr[4]!=size){sceIoClose(f);msg("INVALID PROJECT");return;}
- static uint32_t temp[MAXC*MAXC];int b=sceIoRead(f,temp,size*size*4);sceIoClose(f);
- if(b==size*size*4){memcpy(artwork,temp,size*size*4);dirty=0;msg("PROJECT LOADED");}else msg("INVALID PROJECT");
+ if(a!=8||memcmp(hdr,"PPS3",4)||!(hdr[4]==16||hdr[4]==32||hdr[4]==64||hdr[4]==128)){sceIoClose(f);msg("INVALID PROJECT");return;}
+ int n=hdr[4];static uint32_t tmp[MAXC*MAXC];int b=sceIoRead(f,tmp,n*n*4);sceIoClose(f);
+ if(b!=n*n*4){msg("INVALID PROJECT");return;}
+ init_canvas(n);memcpy(artwork,tmp,n*n*4);dirty=0;msg("PROJECT LOADED");
+}
+/* Minimal PNG encoder: RGBA8, zlib stored DEFLATE blocks; no external PNG library. */
+static uint32_t crc_table[256];
+static void crc_init(void){for(unsigned n=0;n<256;n++){uint32_t c=n;for(int k=0;k<8;k++)c=(c>>1)^((c&1)?0xedb88320u:0);crc_table[n]=c;}}
+static uint32_t crc_step(uint32_t c,const unsigned char *p,unsigned n){while(n--)c=crc_table[(c^*p++)&255]^(c>>8);return c;}
+static void put32(unsigned char *p,uint32_t v){p[0]=v>>24;p[1]=v>>16;p[2]=v>>8;p[3]=v;}
+static int write_all(SceUID f,const void *p,int n){return sceIoWrite(f,p,n)==n;}
+static int chunk(SceUID f,const char *tag,const unsigned char *data,uint32_t n){
+ unsigned char b[4];put32(b,n);if(!write_all(f,b,4)||!write_all(f,tag,4))return 0;
+ if(n&&!write_all(f,data,n))return 0;
+ uint32_t crc=crc_step(0xffffffffu,(const unsigned char*)tag,4);crc=crc_step(crc,data,n)^0xffffffffu;
+ put32(b,crc);return write_all(f,b,4);
+}
+static unsigned char raw[128*(1+128*4)];static unsigned char compressed[128*(1+128*4)+64];
+static void export_png(void){
+ sceIoMkdir(SAVE_DIR,0777);sceIoMkdir(SAVE_DIR "/EXPORTS",0777);
+ char path[120];int found=-1;
+ for(int i=1;i<=999;i++){snprintf(path,sizeof(path),SAVE_DIR "/EXPORTS/ART_%03d.PNG",i);
+  SceUID check=sceIoOpen(path,PSP_O_RDONLY,0);if(check<0){found=i;break;}sceIoClose(check);}
+ if(found<0){msg("EXPORT FOLDER FULL");return;}
+ int k=0;for(int y=0;y<size;y++){raw[k++]=0;for(int x=0;x<size;x++){
+  uint32_t c=artwork[y*size+x];raw[k++]=(unsigned char)c;raw[k++]=(unsigned char)(c>>8);raw[k++]=(unsigned char)(c>>16);raw[k++]=c?255:0;
+ }}
+ int pos=0;compressed[pos++]=0x78;compressed[pos++]=0x01;
+ int rem=k,at=0;while(rem){int n=rem>65535?65535:rem;compressed[pos++]=rem<=65535?1:0;
+  compressed[pos++]=n&255;compressed[pos++]=n>>8;compressed[pos++]=(~n)&255;compressed[pos++]=((~n)>>8)&255;
+  memcpy(compressed+pos,raw+at,n);pos+=n;at+=n;rem-=n;}
+ uint32_t a=1,b=0;for(int i=0;i<k;i++){a=(a+raw[i])%65521;b=(b+a)%65521;}
+ put32(compressed+pos,(b<<16)|a);pos+=4;
+ SceUID f=sceIoOpen(path,PSP_O_WRONLY|PSP_O_CREAT|PSP_O_TRUNC,0777);if(f<0){msg("EXPORT FAILED");return;}
+ const unsigned char signature[8]={137,80,78,71,13,10,26,10};unsigned char ihdr[13]={0};
+ put32(ihdr,size);put32(ihdr+4,size);ihdr[8]=8;ihdr[9]=6;
+ int ok=write_all(f,signature,8)&&chunk(f,"IHDR",ihdr,13)&&chunk(f,"IDAT",compressed,pos)&&chunk(f,"IEND",NULL,0);
+ sceIoClose(f);if(ok){char buf[60];snprintf(buf,sizeof(buf),"EXPORTED ART %03d",found);msg(buf);}else msg("EXPORT FAILED");
 }
 static void canvas_frame(void){
- rect(0,0,SW,SH,bg());
- int cols=(SW+zoom-1)/zoom,rows=(SH+zoom-1)/zoom;
+ rect(0,0,SW,SH,bg());placement();
+ int cols=(SW-offset_x+zoom-1)/zoom,rows=(SH-offset_y+zoom-1)/zoom;
+ if(cols>size)cols=size;if(rows>size)rows=size;
  for(int sy=0;sy<rows;sy++)for(int sx=0;sx<cols;sx++){
-  int x=view_x+sx,y=view_y+sy,px=sx*zoom,py=sy*zoom;
-  if(x>=size||y>=size){rect(px,py,zoom,zoom,bg());continue;}
-  unsigned c=artwork[y*size+x];
-  if(c==TRANSPARENT)c=((x/8+y/8)&1)?RGB(197,201,213):RGB(230,232,239);
+  int x=view_x+sx,y=view_y+sy;if(x>=size||y>=size)continue;
+  int px=offset_x+sx*zoom,py=offset_y+sy*zoom;
+  uint32_t c=artwork[y*size+x];if(!c)c=((x/8+y/8)&1)?RGB(160,166,179):RGB(215,220,228);
   rect(px,py,zoom,zoom,c);
  }
- if(grid_mode){
-  int sub=grid_mode==1?size/2:grid_mode==2?size/4: size/8;
-  if(sub<2)sub=2;
-  for(int i=0;i<=size;i++){
-   int x=(i-view_x)*zoom,y=(i-view_y)*zoom;
+ int right=offset_x+(size-view_x)*zoom,bottom=offset_y+(size-view_y)*zoom;
+ if(right>SW)right=SW;if(bottom>SH)bottom=SH;
+ if(show_grid&&!clean_preview){
+  int sub=grid_mode==1?size/2:grid_mode==2?size/4:size/8;if(sub<2)sub=2;
+  for(int i=view_x;i<=size;i++){
+   int x=offset_x+(i-view_x)*zoom;if(x>right)break;
    int thick=(i%sub==0)?2:1;
-   unsigned c=(i%sub==0)?(theme?RGB(232,111,255):RGB(32,138,159)):RGB(165,171,184);
-   if(zoom>=3||thick==2){if(x>=0&&x<SW)rect(x,0,thick,SH,c);if(y>=0&&y<SH)rect(0,y,SW,thick,c);}
+   if(zoom>=4||thick==2)rect(x,offset_y,thick,bottom-offset_y,(i%sub==0)?accent():RGB(113,124,143));
+  }
+  for(int i=view_y;i<=size;i++){
+   int y=offset_y+(i-view_y)*zoom;if(y>bottom)break;
+   int thick=(i%sub==0)?2:1;
+   if(zoom>=4||thick==2)rect(offset_x,y,right-offset_x,thick,(i%sub==0)?accent():RGB(113,124,143));
   }
  }
- int px=(cursor_x-view_x)*zoom,py=(cursor_y-view_y)*zoom;
- unsigned mark=theme?RGB(255,233,99):RGB(255,58,104);
- rect(px,py,zoom,1,mark);rect(px,py+zoom-1,zoom,1,mark);
- rect(px,py,1,zoom,mark);rect(px+zoom-1,py,1,zoom,mark);
-}
-static void overlay_panels(void){
- rect(0,0,115,SH,panel());rect(0,0,115,3,accent());
- textat(8,10,"PSP PIXEL",ink(),2);textat(8,26,"STUDIO V2",ink(),2);
- rect(8,47,99,1,accent());
- textat(8,57,"DRAW X",ink(),2);textat(8,73,"ERASE SQ",ink(),2);
- textat(8,89,"MOVE DPAD",ink(),2);textat(8,105,"OR ANALOG",ink(),2);
- textat(8,128,"GRID TRI",ink(),2);textat(8,144,"PAL CIRCLE",ink(),2);
- textat(8,160,"COLOR L/R",ink(),2);
- textat(8,186,"START MENU",ink(),2);textat(8,202,"SELECT HIDE",ink(),2);
- rect(352,0,128,SH,panel());rect(352,0,128,3,accent());
- textat(361,10,"PALETTE",ink(),2);
- textat(361,27,palette_names[palette_id],accent(),2);
- for(int i=0;i<palette_count;i++){
-  int x=361+(i%8)*14,y=52+(i/8)*15;
-  if(i==chosen)rect(x-2,y-2,16,16,ink());
-  rect(x,y,12,12,palette[i]);
+ if(!clean_preview){
+  int x=offset_x+(cursor_x-view_x)*zoom,y=offset_y+(cursor_y-view_y)*zoom;
+  unsigned mark=theme?RGB(255,227,91):RGB(255,72,123);
+  rect(x,y,zoom,1,mark);rect(x,y+zoom-1,zoom,1,mark);rect(x,y,1,zoom,mark);rect(x+zoom-1,y,1,zoom,mark);
  }
- rect(361,184,108,15,palette[chosen]);
- char buf[48];snprintf(buf,sizeof(buf),"%d X %d",size,size);textat(361,210,buf,ink(),2);
- snprintf(buf,sizeof(buf),"ZOOM %dX",zoom);textat(361,227,buf,ink(),2);
- textat(361,246,theme?"CYBER":"AERO",accent(),2);
 }
-static const char *menu_names[]={"NEW PROJECT","SAVE PROJECT","LOAD PROJECT","OPTIONS","EXIT TO PSP"};
-static void menu_box(int x,int y,int w,int h){rect(x+3,y+3,w,h,RGB(8,10,20));rect(x,y,w,h,panel());rect(x,y,w,3,accent());}
+static void frame_panel(int x,int y,int w,int h){rect(x+2,y+3,w,h,RGB(8,12,25));rect(x,y,w,h,panel());rect(x,y,w,3,accent());}
+static void overlay_panels(void){
+ frame_panel(5,18,106,143);textat(13,27,"TOOLS",ink(),2);
+ const char *items[]={"UNDO","REDO","PICK COLOR","GRID","PREVIEW"};
+ for(int i=0;i<5;i++){int yy=52+i*20;if(panel_focus==0&&option_item==i)rect(9,yy-3,97,18,accent());
+  textat(14,yy,items[i],panel_focus==0&&option_item==i?bg():ink(),2);}
+ frame_panel(346,18,129,204);textat(355,27,"PALETTES",ink(),2);
+ for(int i=0;i<9;i++){int yy=48+i*17;if(panel_focus==1&&palette_cursor==i)rect(351,yy-2,119,16,accent());
+  textat(356,yy,palette_names[i],panel_focus==1&&palette_cursor==i?bg():ink(),2);}
+ for(int i=0;i<palette_count&&i<8;i++)rect(356+i*14,203,12,10,palette[i]);
+}
+static void mini_hud(void){
+ if(clean_preview)return;
+ char b[60];rect(145,0,190,15,panel());snprintf(b,sizeof(b),"%dX%d Z%d %d,%d",size,size,zoom,cursor_x,cursor_y);
+ textat(151,3,b,ink(),2);
+ rect(337,1,12,12,palette[chosen]);
+}
+static const char *main_items[]={"NEW PROJECT","SAVE PROJECT","LOAD PROJECT","EXPORT PNG","CONTROLS","OPTIONS","EXIT"};
+static void menu_box(int x,int y,int w,int h){rect(x+3,y+3,w,h,RGB(6,9,18));rect(x,y,w,h,panel());rect(x,y,w,3,accent());}
 static void menu_frame(void){
- if(menu==1){menu_box(124,45,232,185);textat(142,59,"PSP PIXEL STUDIO",ink(),2);
- for(int i=0;i<5;i++){int yy=91+i*25;if(i==menu_item)rect(136,yy-5,208,21,accent());textat(145,yy,menu_names[i],i==menu_item?bg():ink(),2);}}
- else if(menu==2){menu_box(136,56,208,166);textat(154,69,"NEW CANVAS",ink(),2);
- const int sizes[]={16,32,64,128};char buf[32];for(int i=0;i<4;i++){
-  int yy=102+i*25;if(i==new_item)rect(147,yy-5,185,21,accent());
-  snprintf(buf,sizeof(buf),"%d X %d",sizes[i],sizes[i]);textat(157,yy,buf,i==new_item?bg():ink(),2);}}
- else if(menu==3){menu_box(119,49,242,183);textat(137,62,"OPTIONS",ink(),2);
- char buf[48];for(int i=0;i<4;i++){
-  int yy=95+i*29;if(i==option_item)rect(130,yy-5,218,22,accent());
-  if(i==0)snprintf(buf,sizeof(buf),"THEME %s",theme?"CYBER":"AERO");
-  if(i==1)snprintf(buf,sizeof(buf),"ZOOM %dX",zoom);
-  if(i==2)snprintf(buf,sizeof(buf),"GRID %s",grid_mode==0?"OFF":grid_mode==1?"HALF":grid_mode==2?"QUARTER":"EIGHTH");
-  if(i==3)snprintf(buf,sizeof(buf),"BACK");
-  textat(140,yy,buf,i==option_item?bg():ink(),2);}}
- else if(menu==4){menu_box(91,79,298,116);textat(109,92,"DISCARD UNSAVED ART?",ink(),2);
- textat(109,121,"X YES",accent(),2);textat(109,147,"O CANCEL",ink(),2);}
+ char b[80];int x=102,y=29,w=276,h=214;
+ menu_box(x,y,w,h);
+ if(menu==1){textat(119,40,"PSP PIXEL STUDIO",ink(),2);
+  for(int i=0;i<7;i++){int yy=69+i*23;if(i==menu_item)rect(111,yy-4,258,19,accent());textat(121,yy,main_items[i],i==menu_item?bg():ink(),2);}}
+ else if(menu==2){textat(120,42,"NEW CANVAS",ink(),2);int sizes[]={16,32,64,128};
+  for(int i=0;i<4;i++){int yy=82+i*30;if(i==new_item)rect(115,yy-4,247,21,accent());snprintf(b,sizeof(b),"%d X %d",sizes[i],sizes[i]);textat(125,yy,b,i==new_item?bg():ink(),2);}}
+ else if(menu==3){textat(120,42,"OPTIONS",ink(),2);
+  const char *it[]={"THEME","GRID GUIDE","GRID LINES","BACK"};
+  for(int i=0;i<4;i++){int yy=80+i*30;if(i==option_item)rect(115,yy-4,247,21,accent());
+   if(i==0)snprintf(b,sizeof(b),"THEME %s",theme?"CYBER":"AERO");
+   if(i==1)snprintf(b,sizeof(b),"GRID %s",grid_mode==1?"HALF":grid_mode==2?"QUARTER":"EIGHTH");
+   if(i==2)snprintf(b,sizeof(b),"LINES %s",show_grid?"ON":"OFF");
+   if(i==3)snprintf(b,sizeof(b),"BACK");textat(125,yy,b,i==option_item?bg():ink(),2);}}
+ else if(menu==4){textat(120,42,"UNSAVED CHANGES",ink(),2);textat(120,92,"X DISCARD",accent(),2);textat(120,124,"O CANCEL",ink(),2);}
+ else if(menu==5){textat(120,42,"CONTROLS",ink(),2);
+  const char *it[]={"DPAD STICK MOVE","X DRAW SQ ERASE","L R COLOR","O ZOOM","SELECT PANELS","START MENU","TRI GRID"};
+  for(int i=0;i<7;i++)textat(119,69+i*22,it[i],ink(),2);}
+ else if(menu==6){textat(120,42,slot_action?"LOAD SLOT":"SAVE SLOT",ink(),2);
+  snprintf(b,sizeof(b),"SLOT %02d",slot+1);textat(133,102,b,accent(),3);
+  textat(120,158,"LEFT RIGHT SLOT",ink(),2);textat(120,188,"X CONFIRM",ink(),2);}
+ else if(menu==8){textat(120,42,"DISCARD CHANGES?",ink(),2);textat(120,94,"X LOAD",accent(),2);textat(120,126,"O CANCEL",ink(),2);}
+ else if(menu==7){textat(120,42,"EXIT TO PSP?",ink(),2);textat(120,94,"X YES",accent(),2);textat(120,126,"O CANCEL",ink(),2);}
 }
 static void frame(void){
  sceGuStart(GU_DIRECT,display_list);sceGuClearColor(bg());sceGuClear(GU_COLOR_BUFFER_BIT);
- canvas_frame();if(show_panels)overlay_panels();
- if(status_frames>0){rect(124,0,228,17,panel());textat(132,4,status,ink(),2);}
- if(menu)menu_frame();
- sceGuFinish();sceGuSync(0,0);sceDisplayWaitVblankStart();sceGuSwapBuffers();
+ canvas_frame();if(show_panels&&!clean_preview&&!menu)overlay_panels();
+ if(!menu&&!show_panels)mini_hud();
+ if(status_frames>0){rect(128,SH-17,230,17,panel());textat(135,SH-14,status,ink(),2);}
+ if(menu)menu_frame();sceGuFinish();sceGuSync(0,0);sceDisplayWaitVblankStart();sceGuSwapBuffers();
 }
 static void apply_new(void){static const int sizes[]={16,32,64,128};init_canvas(sizes[new_item]);menu=0;msg("NEW PROJECT READY");}
-static void select_menu(void){
- if(menu_item==0){menu=2;new_item=size==16?0:size==32?1:size==64?2:3;}
- else if(menu_item==1){save_art();menu=0;}
- else if(menu_item==2){load_art();menu=0;}
- else if(menu_item==3){menu=3;option_item=0;}
- else if(menu_item==4){running=0;}
+static void open_menu_choice(void){
+ switch(menu_item){
+ case 0:menu=2;new_item=size==16?0:size==32?1:size==64?2:3;break;
+ case 1:slot_action=0;menu=6;break;
+ case 2:slot_action=1;menu=6;break;
+ case 3:export_png();menu=0;break;
+ case 4:menu=5;break;
+ case 5:menu=3;option_item=0;break;
+ case 6:menu=7;break;
+ }
+}
+static void tool_activate(void){
+ if(option_item==0)undo();else if(option_item==1)redo();else if(option_item==2)sample();
+ else if(option_item==3){grid_mode=grid_mode%3+1;msg("GRID CHANGED");}
+ else if(option_item==4){clean_preview=!clean_preview;show_panels=0;msg("PREVIEW TOGGLE");}
 }
 int main(int argc,char **argv){
  (void)argc;(void)argv;setup_callbacks();sceCtrlSetSamplingCycle(0);sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
- select_palette(0);init_canvas(64);
+ crc_init();select_palette(0);init_canvas(64);
  sceGuInit();sceGuStart(GU_DIRECT,display_list);
  sceGuDrawBuffer(GU_PSM_8888,(void*)0,PITCH);sceGuDispBuffer(SW,SH,(void*)0x88000,PITCH);
  sceGuDepthBuffer((void*)0x110000,PITCH);sceGuOffset(2048-SW/2,2048-SH/2);
@@ -214,49 +296,47 @@ int main(int argc,char **argv){
  sceGuFinish();sceGuSync(0,0);sceDisplayWaitVblankStart();sceGuDisplay(GU_TRUE);
  unsigned prev=0;int held=0;
  while(running){
-  SceCtrlData pad;sceCtrlReadBufferPositive(&pad,1);
-  unsigned now=pad.Buttons,pressed=now&~prev;
+  SceCtrlData pad;sceCtrlReadBufferPositive(&pad,1);unsigned now=pad.Buttons,pressed=now&~prev;
   int left=(now&PSP_CTRL_LEFT)||(!(now&(PSP_CTRL_LEFT|PSP_CTRL_RIGHT))&&pad.Lx<88);
   int right=(now&PSP_CTRL_RIGHT)||(!(now&(PSP_CTRL_LEFT|PSP_CTRL_RIGHT))&&pad.Lx>168);
   int up=(now&PSP_CTRL_UP)||(!(now&(PSP_CTRL_UP|PSP_CTRL_DOWN))&&pad.Ly<88);
   int down=(now&PSP_CTRL_DOWN)||(!(now&(PSP_CTRL_UP|PSP_CTRL_DOWN))&&pad.Ly>168);
-  int dir=left||right||up||down;
-  int move=dir&&(held==0||(held>12&&(held%3)==0));
-  held=dir?held+1:0;
+  int dir=left||right||up||down;int move=dir&&(held==0||(held>12&&(held%3)==0));held=dir?held+1:0;
   if(menu){
    if(pressed&PSP_CTRL_START){menu=0;}
    else if(pressed&PSP_CTRL_CIRCLE){menu=(menu==4?2:menu==1?0:1);}
    else if(menu==4){if(pressed&PSP_CTRL_CROSS)apply_new();}
-   else {
-    int *index=menu==1?&menu_item:menu==2?&new_item:&option_item;
-    int count=menu==1?5:4;
-    if(move&&up)*index=(*index+count-1)%count;
-    else if(move&&down)*index=(*index+1)%count;
-    if(menu==3&&(pressed&(PSP_CTRL_LEFT|PSP_CTRL_RIGHT|PSP_CTRL_CROSS))){
+   else if(menu==7){if(pressed&PSP_CTRL_CROSS)running=0;}
+   else if(menu==6){if(move&&left)slot=(slot+9)%10;if(move&&right)slot=(slot+1)%10;
+    if(pressed&PSP_CTRL_CROSS){if(slot_action){if(dirty){pending=1;menu=8;}else{load_art();menu=0;}}else{save_art();menu=0;}}}
+   else if(menu==8){if(pressed&PSP_CTRL_CROSS){load_art();menu=0;}}
+   else if(menu==5){if(pressed&PSP_CTRL_CROSS)menu=1;}
+   else {int *index=menu==1?&menu_item:menu==2?&new_item:&option_item;int count=menu==1?7:4;
+    if(move&&up)*index=(*index+count-1)%count;else if(move&&down)*index=(*index+1)%count;
+    if(menu==3&&(pressed&(PSP_CTRL_CROSS|PSP_CTRL_LEFT|PSP_CTRL_RIGHT))){
      if(option_item==0)theme=!theme;
-     if(option_item==1){int step=(pressed&PSP_CTRL_LEFT)?-1:1;zoom+=step;if(zoom<1)zoom=1;if(zoom>16)zoom=16;adjust_view();}
-     if(option_item==2)grid_mode=(grid_mode+1)%4;
-     if(option_item==3&&(pressed&PSP_CTRL_CROSS))menu=1;
-    }else if(pressed&PSP_CTRL_CROSS){
-     if(menu==1)select_menu();else if(menu==2){if(dirty)menu=4;else apply_new();}
-    }
+     if(option_item==1)grid_mode=grid_mode%3+1;
+     if(option_item==2)show_grid=!show_grid;
+     if(option_item==3)menu=1;
+    }else if(pressed&PSP_CTRL_CROSS){if(menu==1)open_menu_choice();else if(menu==2){if(dirty)menu=4;else apply_new();}}
    }
+  }else if(pressed&PSP_CTRL_START){menu=1;menu_item=0;clean_preview=0;}
+  else if(pressed&PSP_CTRL_SELECT){show_panels=!show_panels;clean_preview=0;}
+  else if(show_panels){
+   if(pressed&PSP_CTRL_LTRIGGER)panel_focus=0;if(pressed&PSP_CTRL_RTRIGGER)panel_focus=1;
+   if(move&&up){if(panel_focus==0)option_item=(option_item+4)%5;else palette_cursor=(palette_cursor+8)%9;}
+   if(move&&down){if(panel_focus==0)option_item=(option_item+1)%5;else palette_cursor=(palette_cursor+1)%9;}
+   if(pressed&PSP_CTRL_CROSS){if(panel_focus==0)tool_activate();else{select_palette(palette_cursor);msg(palette_names[palette_id]);}}
+   if(pressed&PSP_CTRL_CIRCLE){show_panels=0;next_zoom();}
   }else{
-   if(pressed&PSP_CTRL_START){menu=1;menu_item=0;}
-   else if(pressed&PSP_CTRL_SELECT)show_panels=!show_panels;
-   else{
-    if(move){
-     if(left&&cursor_x>0)cursor_x--;else if(right&&cursor_x<size-1)cursor_x++;
-     if(up&&cursor_y>0)cursor_y--;else if(down&&cursor_y<size-1)cursor_y++;
-     adjust_view();
-    }
-    if(pressed&PSP_CTRL_LTRIGGER)chosen=(chosen+palette_count-1)%palette_count;
-    if(pressed&PSP_CTRL_RTRIGGER)chosen=(chosen+1)%palette_count;
-    if(pressed&PSP_CTRL_CIRCLE){select_palette((palette_id+1)%9);msg(palette_names[palette_id]);}
-    if(pressed&PSP_CTRL_TRIANGLE)grid_mode=(grid_mode+1)%4;
-    if((now&PSP_CTRL_CROSS)&&((pressed&PSP_CTRL_CROSS)||move)){artwork[cursor_y*size+cursor_x]=palette[chosen];dirty=1;}
-    if((now&PSP_CTRL_SQUARE)&&((pressed&PSP_CTRL_SQUARE)||move)){artwork[cursor_y*size+cursor_x]=TRANSPARENT;dirty=1;}
-   }
+   if(move){if(left&&cursor_x>0)cursor_x--;else if(right&&cursor_x<size-1)cursor_x++;
+    if(up&&cursor_y>0)cursor_y--;else if(down&&cursor_y<size-1)cursor_y++;adjust_view();}
+   if(pressed&PSP_CTRL_LTRIGGER)chosen=(chosen+palette_count-1)%palette_count;
+   if(pressed&PSP_CTRL_RTRIGGER)chosen=(chosen+1)%palette_count;
+   if(pressed&PSP_CTRL_CIRCLE)next_zoom();
+   if(pressed&PSP_CTRL_TRIANGLE)grid_mode=grid_mode%3+1;
+   if((now&PSP_CTRL_CROSS)&&((pressed&PSP_CTRL_CROSS)||move))edit_pixel(palette[chosen]);
+   if((now&PSP_CTRL_SQUARE)&&((pressed&PSP_CTRL_SQUARE)||move))edit_pixel(TRANSPARENT);
   }
   if(status_frames>0)status_frames--;frame();prev=now;
  }

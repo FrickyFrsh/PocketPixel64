@@ -1,29 +1,25 @@
-# PSP Pixel Studio V2
+# PSP Pixel Studio V2.1 — PSP-1000 homebrew
 
-A lightweight pixel-art editor for PSP-1000. This is a new version of Pocket Pixel 64, intended to be compiled by the existing GitHub Actions workflow.
+Build with PSPDEV: `make`. GitHub Actions can use the existing `pspdev/pspdev:latest` workflow. Copy `EBOOT.PBP` to `PSP/GAME/PIXELSTUDIO/EBOOT.PBP`.
 
-## V2 features
-- New Project presets: 16x16, 32x32, 64x64, 128x128
-- D-pad and analog stick both move the cursor; preserves V1 repeat timing and analog deadzone
-- Automatically scrolls the viewport near the edge when zoomed
-- SELECT toggles both floating side panels together
-- START opens New / Save / Load / Options / Exit
-- Frutiger Aero-inspired and Cyberpunk-inspired UI color themes (Options)
-- TRIANGLE cycles grid overlays: off, halves, quarters, eighths. Major subdivisions are thicker than pixel guides. Grid is display-only.
-- Nine built-in palettes; L/R select color; CIRCLE changes palette. Existing artwork retains its RGB colors when palettes change.
-- X draw, SQUARE erase, hold while moving to draw continuously.
-- Zoom adjustable from 1x to 16x via START > Options. Viewport pans automatically when cursor approaches edge.
-- Saves one project **per canvas size** at `ms0:/PSP/PIXELSTUDIO/art_16.pps`, `art_32.pps`, etc. Saves include raw RGBA colors; grid lines are not stored.
+## Controls
+- D-pad / analog: move cursor (same acceleration as V2).
+- X: draw; Square: erase. Hold while moving to paint.
+- L / R: cycle colors in current palette.
+- Circle: cycle zoom, wrapping to Fit Canvas.
+- Triangle: cycle grid subdivision.
+- SELECT: show/hide floating tool and palette panels. While panels are visible, L selects tools, R selects palette list; D-pad up/down chooses, X activates.
+- START: New, Save, Load, Export PNG, Controls, Options, Exit.
 
-## Important limitations
-- **Not yet tested on PSP hardware.** GitHub Actions must compile the source and you should test the EBOOT.
-- The save menu currently saves **one slot per canvas size**. Saving again overwrites that size's previous file. Back up saved files before replacing.
-- V2 uses a new PPS2 save format. V1 `art.p64` is not automatically imported or overwritten.
-- PNG export, layers, project naming, and undo are **not** implemented.
-- Frutiger Aero and Cyberpunk are currently compact color themes, not the full decorative mockups.
-- 128x128 can be navigated by automatic scrolling; large zoom settings display a small part of the canvas.
+## Features
+- 16, 32, 64, 128 canvas presets; fit-and-center initial view, cursor-follow scrolling at high zoom.
+- 10 numbered project slots (PPS3 native format), with unsaved-change warning on new/load.
+- PNG RGBA exports at native resolution to `ms0:/PSP/PIXELSTUDIO/EXPORTS/ART_###.PNG`. Transparency preserved; grid/UI excluded.
+- 64-step pixel edit undo/redo, eyedropper, grid hierarchy, clean preview.
+- Aero/Cyber color schemes and compact overlay panels.
 
-## GitHub Actions
-The existing workflow using `pspdev/pspdev:latest` and `make` can build this project. Replace repository root `main.c`, `Makefile`, and `README.md` with these V2 versions. Leave `PALETTES.md` if desired.
-
-Download the successful run's `PocketPixel64-PSP` artifact (or rename the workflow's artifact label to `PSP-Pixel-Studio-V2`). Put `EBOOT.PBP` in `PSP/GAME/PSPPIXELSTUDIO/` on the Memory Stick. Keep V1 installed in its separate folder as a fallback.
+## Notes
+- Saves are not compatible with V2 PPS2 format. Keep V2 backups.
+- Undo/redo is pixel-change based; continuous drawing can use several steps.
+- PNG files use valid uncompressed DEFLATE and may be larger than typical optimized PNGs.
+- Source is provided for compilation/testing; no PSP hardware or PSPDEV compiler validation was available in this environment.
