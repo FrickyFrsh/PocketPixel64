@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, debug/v2-2-1-stable-render, feature/v2-2-2-circle-tool]
+    branches: [main, debug/v2-2-1-stable-render, feature/v2-2-2-circle-tool, feature/v2-3-aero-ui]
   workflow_dispatch:
 
 jobs:
